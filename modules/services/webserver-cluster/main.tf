@@ -1,12 +1,10 @@
 resource "aws_launch_configuration" "example" {
   image_id        = "ami-0f8ca728008ff5af4"
   instance_type   = var.instance_type
-  security_groups = [aws_security_group.instance.id]
-  user_data       = <<-EOF
-                  #!/bin/bash
-                  echo "Hello, World" > index.html
-                  nohup busybox httpd -f -p ${var.server_port} &
-                  EOF
+  security_groups = [aws_security_group.alb.id]
+  user_data       = templatefile("${path.module}/user-data.sh", {
+    server.port = var.server_port
+  } )
   # Required when using a launch configuration with an auto scaling group.
   lifecycle {
     create_before_destroy = true
@@ -27,19 +25,32 @@ resource "aws_autoscaling_group" "example" {
     propagate_at_launch = true
   }
 }
-resource "aws_security_group" "instance" {
-  name = "terraform-example-instance"
-  ingress {
-    from_port   = var.server_port
-    to_port     = var.server_port
-    protocol    = local.tcp_protocol
-    cidr_blocks = local.all_ips
-  }
-  ingress {
-    from_port = 8080
-    protocol  = local.tcp_protocol
-    to_port   = 8080
-  }
+
+resource "aws_security_group" "alb" {
+  name = "${var.cluster_name}"-alb
+
+}
+
+resource "aws_security_group_rule" "allow_http_inbound" {
+
+  type              = "ingress"
+  security_group_id = aws_security_group.alb.id
+
+  from_port   = var.server_port
+  to_port     = var.server_port
+  protocol    = local.tcp_protocol
+  cidr_blocks = local.all_ips
+
+}
+resource "aws_security_group_rule" "allow_all_outbound" {
+
+  type              = "egress"
+  security_group_id = aws_security_group.alb.id
+
+  from_port = 8080
+  protocol  = local.tcp_protocol
+  to_port   = 8080
+
 }
 
 resource "aws_alb" "example" {
@@ -76,9 +87,6 @@ resource "aws_lb_listener_rule" "asg" {
   }
 }
 
-output "alb_dns_name" {
-  value = aws_alb.example.dns_name
-}
 resource "aws_lb_target_group" "asg" {
   name     = "terraform-asg-example"
   port     = var.server_port
